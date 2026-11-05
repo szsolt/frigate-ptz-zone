@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTZ zones</title>
+<style>
+  :root { color-scheme: dark; font: 15px system-ui, sans-serif; }
+  body { margin: 0; padding: 10px; background: #111; color: #ddd; }
+  main { display: grid; grid-template-columns: 3fr minmax(250px, 1fr); gap: 12px; max-width: 1500px; margin: auto; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .feed { position: relative; aspect-ratio: 16 / 9; background: #222; border-radius: 6px; overflow: hidden; touch-action: none; }
+  .feed img, .feed svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tag { position: absolute; left: 8px; top: 6px; background: #000a; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+  polygon { fill: #3c34; stroke: #3c3; stroke-width: 4; }
+  .editing polygon { fill: #fc34; stroke: #fc3; }
+  polygon.guess { fill: none; stroke: #39f; stroke-width: 4; stroke-dasharray: 12 8; }
+  path.diff { fill: #f338; stroke: none; }
+  .pt { fill: #fff; stroke: #000; stroke-width: 2; cursor: grab; }
+  .mid { fill: #fff8; cursor: copy; }
+  select, button { font: inherit; color: #fff; background: #333; border: 0; border-radius: 6px; padding: 8px 10px; }
+  button:disabled { opacity: .4; }
+  .primary { background: #2563eb; }
+  .danger { background: #a33; }
+  .side { display: flex; flex-direction: column; gap: 8px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 52px); gap: 5px; justify-content: center; }
+  .pad button { height: 46px; font-size: 18px; }
+  .pad button { touch-action: none; user-select: none; }
+  .speed { display: flex; align-items: center; gap: 8px; } .speed input { flex: 1; }
+  .row { display: flex; gap: 6px; } .row button { flex: 1; }
+  canvas { width: 100%; aspect-ratio: 2 / 1; background: #1c1c1c; border-radius: 6px; cursor: pointer; }
+  .small { font-size: 12px; color: #999; }
+  #msg { min-height: 1.3em; color: #fc3; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <div class="feed" id="feed">
+      <img id="img" alt="">
+      <svg id="svg" viewBox="0 0 1600 900" preserveAspectRatio="none"></svg>
+      <span class="tag" id="tag">…</span>
+    </div>
+    <div class="small">Tap the picture to centre the camera there. Drag the points. Tap a small dot to add a point, double-tap a point to remove it.
+      Points on the frame edge mean "continues off-screen".</div>
+  </div>
+  <div class="side">
+    <select id="camera"></select>
+    <div class="pad">
+      <button data-op="LeftUp">◤</button><button data-op="Up">▲</button><button data-op="RightUp">◥</button>
+      <button data-op="Left">◀</button><button data-op="home" title="Home">⌂</button><button data-op="Right">▶</button>
+      <button data-op="LeftDown">◣</button><button data-op="Down">▼</button><button data-op="RightDown">◢</button>
+    </div>
+    <button id="hold" title="Turns off the camera's own tracking and its return to the guard view. Back on 10 min after your last action.">Hold still</button>
+    <label class="small speed">Speed <input type="range" id="speed" min="1" max="64"> <span id="speedv"></span></label>
+    <div class="row">
+      <button class="primary" id="save" disabled>Save keyframe</button>
+      <button id="reset" disabled>Reset</button>
+    </div>
+    <div class="row">
+      <button id="new">New zone here</button>
+      <button class="danger" id="del">Delete keyframe</button>
+    </div>
+    <div class="row">
+      <button id="guess" title="On a keyframe: the zone its neighbours predict here, blue dashed, with the disagreeing area in red">Compare with neighbours</button>
+      <button id="adopt" hidden title="Put the neighbours' prediction on the points, to adjust and save">Load their guess</button>
+    </div>
+    <div class="row">
+      <button id="optimize" title="Drop keyframes the others reproduce to 95% or better. Undo restores them.">Optimize keyframes</button>
+      <button id="undo" hidden>Undo optimize</button>
+    </div>
+    <div class="row">
+      <button id="calibrate" title="Eight short moves measure how far a fine correction travels per second. Goto lands closer after it.">Calibrate moves</button>
+    </div>
+    <div id="msg"></div>
+    <canvas id="map" width="600" height="300"></canvas>
+    <div class="small">Pan → across, tilt ↓ down. Green: keyframes. Yellow: camera.
+      Red: no zone there, capture a keyframe nearby. Orange: beyond the last keyframe, a keyframe here pins the zone down.
+      Orange or red dot: its neighbours disagree with that keyframe, redraw it or add one between. Tap to move the camera there.
+      Hold an arrow to move; the camera stops when you let go.
+      During and just after a move the zone shrinks for a few seconds: Frigate detects on frames a little behind the camera.</div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const W = 1600, H = 900, SNAP = 0.02;
+let camera = null, state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
+
+const api = (path, body) => fetch(`api/${camera}/${path}`, body && {
+  method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+}).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error); return j; });
+const say = t => $("msg").textContent = t || "";
+
+// --- live frame: next one as soon as the last has loaded
+function frame() {
+  if (camera) $("img").src = `api/${camera}/frame.jpg?t=${Date.now()}`;
+}
+$("img").onload = $("img").onerror = () => setTimeout(frame, 300);
+
+// --- zone drawing
+const parse = s => { const v = s.split(",").map(Number), out = []; for (let i = 0; i < v.length; i += 2) out.push([v[i], v[i + 1]]); return out; };
+function draw() {
+  const z = state && (state.here ? state.here.zone : state.zone);
+  const svg = $("svg"), shown = pts || (z ? parse(z) : []);
+  $("feed").classList.toggle("editing", !!pts);
+  let h = shown.length ? `<polygon points="${shown.map(([x, y]) => `${x * W},${y * H}`).join(" ")}"/>` : "";
+  const guess = compare && !pts && state && state.here && state.here.guess;
+  $("adopt").hidden = !guess;
+  $("guess").disabled = !(state && state.here) || !!pts;
+  $("guess").classList.toggle("primary", compare);
+  if (guess) {  // even-odd fill of both outlines paints exactly where they disagree
+    const g = parse(guess), path = p => "M" + p.map(([x, y]) => `${x * W},${y * H}`).join("L") + "Z";
+    h += `<path class="diff" fill-rule="evenodd" d="${path(shown)}${path(g)}"/><polygon class="guess" points="${g.map(([x, y]) => `${x * W},${y * H}`).join(" ")}"/>`;
+  }
+  shown.forEach(([x, y], i) => {
+    const [nx, ny] = shown[(i + 1) % shown.length];
+    h += `<circle class="mid" data-i="${i}" cx="${(x + nx) / 2 * W}" cy="${(y + ny) / 2 * H}" r="9"/>`;
+  });
+  shown.forEach(([x, y], i) => h += `<circle class="pt" data-i="${i}" cx="${x * W}" cy="${y * H}" r="14"/>`);
+  svg.innerHTML = h;
+  $("save").disabled = $("reset").disabled = !pts;
+  document.querySelectorAll(".pad button").forEach(b => b.disabled = !!pts || (state && state.moving));
+}
+function startEdit() {
+  if (!pts) {
+    const z = state.here ? state.here.zone : state.zone;
+    pts = z ? parse(z) : []; editAt = {pan: state.pan, tilt: state.tilt, replace: state.here};
+  }
+}
+function toNorm(e) {
+  const r = $("svg").getBoundingClientRect();
+  const c = v => Math.min(1, Math.max(0, v));
+  let x = c((e.clientX - r.left) / r.width), y = c((e.clientY - r.top) / r.height);
+  if (x < SNAP) x = 0; if (x > 1 - SNAP) x = 1; if (y < SNAP) y = 0; if (y > 1 - SNAP) y = 1;
+  return [x, y];
+}
+$("svg").addEventListener("pointerdown", e => {
+  const i = +e.target.dataset.i;
+  if (!state) return;
+  if (isNaN(i)) {  // not on a handle: centre the camera on the tapped spot
+    if (pts) return;
+    const r = $("svg").getBoundingClientRect();
+    api("centre", {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height})
+      .then(to => say(`Centring: pan ${to.pan}, tilt ${to.tilt}…`)).catch(e => say(e.message));
+    return;
+  }
+  startEdit();
+  if (e.target.classList.contains("mid")) { pts.splice(i + 1, 0, toNorm(e)); drag = i + 1; }
+  else drag = i;
+  $("svg").setPointerCapture(e.pointerId);
+  draw();
+});
+$("svg").addEventListener("pointermove", e => { if (drag !== null) { pts[drag] = toNorm(e); draw(); } });
+$("svg").addEventListener("pointerup", () => drag = null);
+$("svg").addEventListener("dblclick", e => {
+  const i = +e.target.dataset.i;
+  if (!e.target.classList.contains("pt") || isNaN(i)) return;
+  startEdit();
+  if (pts.length > 3) pts.splice(i, 1);
+  draw();
+});
+
+// --- buttons
+// Hold to move: keepalives while pressed; the server stops the camera if they stop coming
+let holding = null, sent = Promise.resolve();
+const speed = () => +$("speed").value;
+$("speed").value = localStorage.speed || 10;
+$("speed").oninput = () => $("speedv").textContent = localStorage.speed = speed();
+$("speed").oninput();
+$("guess").onclick = () => { compare = !compare; draw(); };
+function release() {
+  if (!holding) return;
+  clearInterval(holding); holding = null;
+  sent = sent.finally(() => api("move", {op: "Stop"}).catch(e => say(e.message)));  // after the last move, so a quick tap stops too
+}
+document.querySelectorAll(".pad button").forEach(b => {
+  const op = b.dataset.op;
+  if (op === "home") return b.onclick = () => api("move", {op}).then(() => say()).catch(e => say(e.message));
+  b.onpointerdown = e => {
+    if (b.disabled) return;
+    b.setPointerCapture(e.pointerId);
+    const go = () => sent = api("move", {op, speed: speed()}).then(() => say()).catch(e => { say(e.message); release(); });
+    release(); go(); holding = setInterval(go, 400);
+  };
+  b.onpointerup = b.onpointercancel = b.onlostpointercapture = release;
+});
+window.addEventListener("blur", release);
+$("hold").onclick = () => api("pause", {on: !(state && state.paused)}).then(poll).catch(e => say(e.message));
+$("reset").onclick = () => { pts = editAt = null; say(); draw(); };
+$("adopt").onclick = () => { pts = parse(state.here.guess); editAt = {pan: state.pan, tilt: state.tilt, replace: state.here}; draw(); };
+$("new").onclick = () => {
+  if (!state) return;
+  pts = [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]; editAt = {pan: state.pan, tilt: state.tilt}; draw();
+};
+$("save").onclick = () => api("keyframe", {pan: editAt.pan, tilt: editAt.tilt, coords: pts.flat(),
+    replace: editAt.replace && {pan: editAt.replace.pan, tilt: editAt.replace.tilt}})
+  .then(() => { pts = editAt = null; say("Saved. The service uses it within a second."); poll(); })
+  .catch(e => say(e.message));
+$("del").onclick = () => {
+  const k = here();
+  if (k && confirm(`Delete the keyframe at pan ${k.pan}, tilt ${k.tilt}?`))
+    api("delete", k).then(() => { say("Deleted."); poll(); }).catch(e => say(e.message));
+};
+$("optimize").onclick = () => {
+  if (confirm("Drop the keyframes the others reproduce to 95% or better? Undo restores them."))
+    api("optimize", {}).then(r => { say(`Kept ${r.kept}, dropped ${r.dropped}. The service uses them within a second.`); poll(); }).catch(e => say(e.message));
+};
+$("calibrate").onclick = () => {
+  if (confirm("The camera makes eight short moves, about half a minute. Calibrate?"))
+    api("calibrate", {}).then(() => { calibrating = true; say("Calibrating: eight short moves, holding still."); }).catch(e => say(e.message));
+};
+$("undo").onclick = () => api("undo", {}).then(() => { say("Restored the keyframes from before the optimize."); poll(); }).catch(e => say(e.message));
+const here = () => state && state.here;
+
+// --- coverage map
+function mapXY(pan, tilt) {
+  const [p0, p1, t0, t1] = state.coverage.box, c = $("map");
+  return [(pan - p0) / (p1 - p0) * c.width, (tilt - t0) / (t1 - t0) * c.height];
+}
+function drawMap() {
+  const c = $("map"), g = c.getContext("2d"), cov = state.coverage, [nx, ny] = cov.steps;
+  g.clearRect(0, 0, c.width, c.height);
+  const cell = (fill, list) => { g.fillStyle = fill; list.forEach(([i, j]) => g.fillRect(i * c.width / nx, j * c.height / ny, c.width / nx + 1, c.height / ny + 1)); };
+  cell("#c333", cov.off); cell("#fa33", cov.extrapolated);
+  // a keyframe its neighbours disagree with: redraw it or add one between
+  state.keyframes.forEach((k, n) => {
+    const fit = cov.fit[n] ?? 1, [x, y] = mapXY(k.pan, k.tilt);
+    g.fillStyle = fit < 0.8 ? "#f33" : fit < 0.9 ? "#fa3" : "#3c3";
+    g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill();
+  });
+  const [x, y] = mapXY(state.pan, state.tilt);
+  const [p0, p1] = cov.box, r = Math.max(9, state.near * c.width / (p1 - p0));  // a dot inside the ring is the keyframe you edit
+  g.strokeStyle = "#fc3"; g.lineWidth = 3; g.beginPath(); g.arc(x, y, r, 0, 7); g.stroke();
+}
+$("map").onclick = e => {
+  if (!state || pts) return;
+  const c = $("map"), r = c.getBoundingClientRect(), [p0, p1, t0, t1] = state.coverage.box;
+  const x = (e.clientX - r.left) / r.width * c.width, y = (e.clientY - r.top) / r.height * c.height;
+  // A tap near a keyframe goes to exactly that keyframe
+  const near = state.keyframes.find(k => { const [kx, ky] = mapXY(k.pan, k.tilt); return Math.hypot(kx - x, ky - y) < 20; });
+  const to = near || {pan: Math.round(p0 + x / c.width * (p1 - p0)), tilt: Math.round(t0 + y / c.height * (t1 - t0))};
+  api("goto", to).then(() => say(`Moving to pan ${to.pan}, tilt ${to.tilt}…`)).catch(e => say(e.message));
+};
+
+// --- state polling
+async function poll() {
+  try {
+    state = await api("state");
+    const k = here();
+    const fit = k && state.coverage.fit[state.keyframes.findIndex(x => x.pan === k.pan && x.tilt === k.tilt)];
+    $("tag").textContent = `pan ${state.pan} · tilt ${state.tilt}` + (state.moving ? " · moving" : "")
+      + (k ? ` · keyframe ${k.pan}/${k.tilt}` + (fit < 1 ? ` · neighbours agree ${Math.round(fit * 100)}%` : "") : state.zone ? "" : " · zone off");
+    $("save").textContent = (pts ? editAt.replace : k) ? "Update keyframe" : "Save keyframe";
+    $("del").disabled = !k;
+    $("undo").hidden = !state.undo;
+    $("calibrate").textContent = state.calibrated ? "Calibrate moves ✓" : "Calibrate moves";
+    if (calibrating && !state.moving) {
+      calibrating = false;
+      say("Calibration done. Goto now uses the measured moves.");
+    }
+    const left = state.paused;
+    $("hold").textContent = left ? `Holding still · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} · tap to release` : "Hold still";
+    $("hold").classList.toggle("primary", left > 0);
+    if (pts && (Math.abs(state.pan - editAt.pan) > 3 || Math.abs(state.tilt - editAt.tilt) > 3)) {
+      pts = editAt = null;  // the drawing belongs to the old view; show the zone of the new one
+      say("The camera moved, so the unsaved edit was dropped.");
+    }
+    draw(); drawMap();
+  } catch (e) { say(e.message); }
+}
+setInterval(poll, 700);
+
+// --- cameras
+fetch("api/cameras").then(r => r.json()).then(list => {
+  $("camera").innerHTML = list.map(n => `<option>${n}</option>`).join("");
+  $("camera").value = list.includes(localStorage.camera) ? localStorage.camera : list[0];
+  $("camera").onchange = () => {
+    camera = localStorage.camera = $("camera").value;
+    state = pts = editAt = null; say(); draw(); poll();
+    if (!$("img").src) frame();  // the frame loop picks up the new camera by itself
+  };
+  $("camera").onchange();
+});
+</script>
+</body>
+</html>

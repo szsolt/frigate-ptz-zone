@@ -1,0 +1,17 @@
+services:
+  # ... your frigate service ...
+
+  frigate-ptz-zone:
+    image: ghcr.io/szsolt/frigate-ptz-zone:latest
+    container_name: frigate-ptz-zone
+    restart: unless-stopped
+    depends_on:
+      - frigate
+    ports:
+      - "8781:8781"   # the zone editor; keep it on your LAN
+    volumes:
+      - ./ptz-zone:/data   # cameras.json, keyframes, what the service learns
+    environment:
+      FRIGATE_API: http://frigate:5000
+      REOLINK_USER: admin
+      REOLINK_PASSWORD: ${REOLINK_PASSWORD}

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "frigate-ptz-zone"
+version = "0.1.0"
+description = "Keep a Frigate zone on the ground while a PTZ camera pans and tilts"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.26,<3", "opencv-python-headless>=4.8,<6"]
+
+[project.optional-dependencies]
+fit = ["scipy>=1.11,<2"]
+test = ["pytest>=8", "ruff>=0.17.3"]
+
+[project.scripts]
+frigate-ptz-zone = "frigate_ptz_zone.__main__:main"
+
+[tool.setuptools]
+packages = ["frigate_ptz_zone", "frigate_ptz_zone.adapters"]
+
+[tool.setuptools.package-data]
+frigate_ptz_zone = ["editor.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

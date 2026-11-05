@@ -1,0 +1,6 @@
+{
+ "driveway": {
+  "host": "192.0.2.10",
+  "zone": "driveway_ground"
+ }
+}
