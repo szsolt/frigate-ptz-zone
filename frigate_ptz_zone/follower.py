@@ -15,8 +15,8 @@ log = logging.getLogger(__name__)
 
 POLL = 0.5        # s between position reads
 MIN_PUSH = 1.0    # s between zone writes while the camera moves
-LOST_AFTER = 10   # s without a position before the zone is switched off
 LAG = (1.0, 4.5)  # s Frigate's detect frames run behind the camera: measured 1-2.3 s one day, 3.2-4.5 s another
+LOST_AFTER = LAG[1]  # s without a position before the zone is switched off: the camera may have turned since
 UNSET = object()  # the zone before the first write
 
 Position = tuple[int, int]
