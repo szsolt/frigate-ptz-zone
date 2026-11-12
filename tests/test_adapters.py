@@ -11,7 +11,7 @@ def test_reolink_opens_without_contacting_the_camera():
 def camera(monkeypatch):
     monkeypatch.setenv("REOLINK_USER", "u")
     monkeypatch.setenv("REOLINK_PASSWORD", "p")
-    cam = reolink.Camera({"host": "h"})
+    cam = reolink.Camera({"host": "h", "position": "https"})
     cam.calls = []
     return cam
 
@@ -35,6 +35,30 @@ def test_relogin_on_expired_token(camera, monkeypatch):
     answer(camera, monkeypatch, handler)
     assert camera.position() == (1, 2)
     assert camera.calls == ["Login", "GetPtzCurPos", "Login", "GetPtzCurPos"]
+
+
+def test_baichuan_position_and_refused_login(monkeypatch):
+    cam = reolink.Camera({"host": "h"})
+    reply = "<body><ptzCurPos><pPos>1238</pPos><tPos>113</tPos><zPos>-1</zPos></ptzCurPos></body>"
+
+    async def send(cmd_id):
+        return reply
+    monkeypatch.setattr(cam, "_bc_send", send)
+    assert cam.position() == (1238, 113)
+
+    async def refused(cmd_id):
+        raise reolink.CredentialsInvalidError("bad login")
+    monkeypatch.setattr(cam, "_bc_send", refused)
+    with pytest.raises(reolink.CredentialsInvalidError):
+        cam.position()
+    with pytest.raises(RuntimeError, match="waiting"):
+        cam.position()
+    assert cam.backoff == 60
+
+
+def test_unknown_position_option_is_refused():
+    with pytest.raises(ValueError):
+        reolink.Camera({"host": "h", "position": "onvif"})
 
 
 def test_refused_login_backs_off_but_no_answer_retries_soon(camera, monkeypatch):

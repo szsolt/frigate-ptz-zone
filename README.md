@@ -136,6 +136,7 @@ One entry per camera. The key is the camera's name in Frigate.
 | `zone` | The Frigate zone that follows the camera. Required. |
 | `host` | The camera's address. |
 | `type` | The kind of camera. Default `reolink`. |
+| `position` | Reolink only: how the camera's position is read. `baichuan` (default) is Reolink's own protocol, the one Home Assistant uses. It's about 3× faster, and it works on models whose HTTPS reply has no tilt, like the TrackMix. `https` uses the web API. |
 | `grid`, `shift` | How the picture moves when the camera turns. Printed by `fit_shift`. |
 | `lens` | Lens correction for wide-angle cameras. Printed by `fit_lens`. Optional. |
 | `keyframes` | The file the keyframes are saved in. Default `keyframes-<camera>.json`. |
