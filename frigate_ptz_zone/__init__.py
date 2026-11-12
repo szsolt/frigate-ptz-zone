@@ -8,4 +8,4 @@ looks up (sky and treetops). The zone editor page records keyframes.
 Cameras talk through adapters (adapters/), Reolink first.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
