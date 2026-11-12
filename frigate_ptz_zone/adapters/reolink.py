@@ -160,7 +160,7 @@ class Camera(PTZ):
                 self.token = None
             if self._bc is not None:
                 try:
-                    self._run(self._bc.baichuan.logout())
+                    self._run(self._bc.logout())  # also closes its HTTP session; no HTTP token, so nothing is sent
                 except Exception as e:  # noqa: BLE001
                     log.info("%s: Baichuan logout failed: %s", self.host, type(e).__name__)
                 self._bc = None
