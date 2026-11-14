@@ -134,6 +134,8 @@ function toNorm(e) {
   if (x < SNAP) x = 0; if (x > 1 - SNAP) x = 1; if (y < SNAP) y = 0; if (y > 1 - SNAP) y = 1;
   return [x, y];
 }
+// Double press is caught here, not with dblclick: draw() replaces the pressed circle, so the browser never fires dblclick
+let press = null;
 $("svg").addEventListener("pointerdown", e => {
   const i = +e.target.dataset.i;
   if (!state) return;
@@ -145,20 +147,16 @@ $("svg").addEventListener("pointerdown", e => {
     return;
   }
   startEdit();
+  const again = press && press.i === i && e.timeStamp - press.t < 400;
+  press = null;
   if (e.target.classList.contains("mid")) { pts.splice(i + 1, 0, toNorm(e)); drag = i + 1; }
-  else drag = i;
-  $("svg").setPointerCapture(e.pointerId);
+  else if (again) { if (pts.length > 3) pts.splice(i, 1); }  // double press deletes the point
+  else { drag = i; press = {i, t: e.timeStamp}; }
+  if (drag !== null) $("svg").setPointerCapture(e.pointerId);
   draw();
 });
 $("svg").addEventListener("pointermove", e => { if (drag !== null) { pts[drag] = toNorm(e); draw(); } });
 $("svg").addEventListener("pointerup", () => drag = null);
-$("svg").addEventListener("dblclick", e => {
-  const i = +e.target.dataset.i;
-  if (!e.target.classList.contains("pt") || isNaN(i)) return;
-  startEdit();
-  if (pts.length > 3) pts.splice(i, 1);
-  draw();
-});
 
 // --- buttons
 // Hold to move: keepalives while pressed; the server stops the camera if they stop coming
