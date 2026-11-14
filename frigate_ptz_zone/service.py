@@ -69,6 +69,9 @@ def run(settings: Settings) -> None:
     threads = [threading.Thread(target=rig.follower.run, daemon=True) for rig in rigs.values()]
     for t in threads:
         t.start()
+    if not threads:
+        log.warning("no camera has a shift yet: idle until fit_shift is done and the service restarts")
+        threading.Event().wait()
     for t in threads:
         t.join()
 
