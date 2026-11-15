@@ -40,6 +40,7 @@ class Camera(PTZ):
             raise ValueError(f'"position" must be "baichuan" or "https", not {self.via!r}')
         self._bc: Host | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._bc_ok = False  # the last position read worked, so no login or reconnect is due
 
     def _call(self, cmd: str, param: dict, token: bool = True) -> Any:
         q = {"cmd": cmd, "token": self.token} if token else {"cmd": cmd}
@@ -97,10 +98,14 @@ class Camera(PTZ):
             if time.monotonic() < self.retry_at:  # the same wait as login(): both count towards the camera's lockout
                 raise RuntimeError("login failed earlier, waiting before the next try")
             try:
-                xml = self._run(self._bc_send(433))  # GetPtzCurPos
-            except CredentialsInvalidError:
-                self._login_refused()
+                # a short wait on a working link: a stalled one switches the zones off sooner
+                xml = self._run(self._bc_send(433), timeout=1.5 if self._bc_ok else 5)  # GetPtzCurPos
+            except Exception as e:
+                self._bc_ok = False
+                if isinstance(e, CredentialsInvalidError):
+                    self._login_refused()
                 raise
+            self._bc_ok = True
         root = ET.fromstring(xml)
         return int(root.findtext(".//pPos")), int(root.findtext(".//tPos"))
 
@@ -109,14 +114,14 @@ class Camera(PTZ):
             self._bc = Host(self.host, os.environ["REOLINK_USER"], os.environ["REOLINK_PASSWORD"])
         return await self._bc.baichuan.send(cmd_id=cmd_id, channel=0)
 
-    def _run(self, coro: Any) -> Any:
+    def _run(self, coro: Any, timeout: float = 5) -> Any:
         """Run a reolink_aio coroutine on this camera's own event loop, from the caller's thread."""
         if self._loop is None:
             self._loop = asyncio.new_event_loop()
             threading.Thread(target=self._loop.run_forever, daemon=True).start()
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
-            return fut.result(timeout=5)
+            return fut.result(timeout=timeout)
         except TimeoutError:
             fut.cancel()
             raise

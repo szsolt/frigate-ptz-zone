@@ -56,6 +56,25 @@ def test_baichuan_position_and_refused_login(monkeypatch):
     assert cam.backoff == 60
 
 
+def test_baichuan_waits_short_only_on_a_working_link(monkeypatch):
+    cam = reolink.Camera({"host": "h"})
+    replies = iter([True, True, False, True])
+
+    async def send(cmd_id):
+        if not next(replies):
+            raise TimeoutError
+        return "<body><pPos>1</pPos><tPos>2</tPos></body>"
+    monkeypatch.setattr(cam, "_bc_send", send)
+    waits, run = [], cam._run
+    monkeypatch.setattr(cam, "_run", lambda coro, timeout=5: (waits.append(timeout), run(coro, timeout))[1])
+    for _ in range(4):
+        try:
+            cam.position()
+        except TimeoutError:
+            pass
+    assert waits == [5, 1.5, 1.5, 5]  # the first read logs in; a read after a failure may reconnect
+
+
 def test_unknown_position_option_is_refused():
     with pytest.raises(ValueError):
         reolink.Camera({"host": "h", "position": "onvif"})
