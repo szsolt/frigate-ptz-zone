@@ -1,4 +1,5 @@
 from collections import deque
+from dataclasses import replace
 
 import pytest
 from fakes import FakeCamera, FakeFrigate
@@ -35,8 +36,8 @@ def test_sky_up():
 def rig(tmp_path):
     cfg = CameraConfig.from_dict("cam", {"zone": "z", "grid": [160, 90], "shift": [-0.5, 0, 0, 0.4],
                                          "mask": "sky", "mask_tilt": 100, "pan_min": 0, "pan_max": 1000}, tmp_path)
-    store = KeyframeStore(cfg.keyframes)
-    store.save(500, 500, [0, 0, 1, 0, 1, 1], "a")
+    store = KeyframeStore(cfg.keyframes, cfg.default_zone)
+    store.save("z", 500, 500, [0, 0, 1, 0, 1, 1], "a")
     camera, frigate = FakeCamera((500, 500)), FakeFrigate()
     return Follower(cfg, cfg.model, camera, store, frigate), camera, frigate
 
@@ -46,7 +47,7 @@ def test_zone_follows_and_is_not_rewritten(rig):
     f.step()
     f._last_push = 0  # past MIN_PUSH
     f.step()
-    assert len(frigate.zones) == 1 and frigate.zones[0] and frigate.masks == [False]
+    assert len(frigate.zones) == 1 and frigate.zones[0]["z"] and frigate.masks == [False]
 
 
 def test_zone_off_when_position_lost(rig, monkeypatch):
@@ -54,11 +55,11 @@ def test_zone_off_when_position_lost(rig, monkeypatch):
     f.step()
     camera.pos = OSError("down")
     f.step()
-    assert frigate.zones[-1] is not None  # a short gap changes nothing
+    assert frigate.zones[-1]["z"] is not None  # a short gap changes nothing
     monkeypatch.setattr(follower_module, "LOST_AFTER", -1)
     f.step()
     f.step()
-    assert frigate.zones[1:] == [None] and frigate.masks == [False]
+    assert frigate.zones[1:] == [{"z": None}] and frigate.masks == [False]
 
 
 def test_out_of_range_sends_home_and_once_more_on_return(rig):
@@ -70,3 +71,17 @@ def test_out_of_range_sends_home_and_once_more_on_return(rig):
     f.step()
     f.step()
     assert camera.moves == ["home", "home", "home"]
+
+
+def test_two_zones_in_one_write_and_a_dropped_zone_is_left_alone(rig, monkeypatch):
+    f, camera, frigate = rig
+    f.keyframes.save("street", 500, 500, [0, 0.5, 1, 0.5, 1, 1], "b")
+    f.set_cfg(replace(f.cfg, zones=("z", "street")))
+    f.step()
+    assert frigate.zones == [{"z": frigate.zones[0]["z"], "street": frigate.zones[0]["street"]}]
+    f.set_cfg(replace(f.cfg, zones=("street",)))
+    monkeypatch.setattr(follower_module, "LOST_AFTER", -1)
+    camera.pos = OSError("down")
+    f.step()
+    f.step()
+    assert frigate.zones[1:] == [{"street": None}]

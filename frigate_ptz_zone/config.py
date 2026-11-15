@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import jsonfile
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -60,13 +62,13 @@ class ZoneModel:
 @dataclass(frozen=True)
 class CameraConfig:
     name: str
-    zone: str                   # the Frigate zone that follows the camera
+    zones: tuple[str, ...]      # the Frigate zones that follow the camera
     keyframes: Path
     model: ZoneModel | None     # None until fit_shift has measured the camera
     adapter: str = "reolink"    # module in adapters/
     options: dict[str, Any] = field(default_factory=dict)  # for the adapter, e.g. host
-    mask: str | None = None     # a Frigate motion mask that is on while the camera looks up
-    mask_tilt: int | None = None  # ... at this tilt or higher up
+    masks: dict[str, int] = field(default_factory=dict)  # sky masks: Frigate motion mask -> the tilt from which it is on
+    default_zone: str = ""      # the zone of keyframes saved before zones had names
     pan_range: tuple[int, int] | None = None  # outside it the camera is sent home
 
     @classmethod
@@ -80,9 +82,24 @@ class CameraConfig:
         pan_range = (d.pop("pan_min"), d.pop("pan_max")) if "pan_min" in d else None
         if "mask" in d and "mask_tilt" not in d:
             raise ValueError(f"{name}: mask needs mask_tilt")
-        return cls(name=name, zone=d.pop("zone"), keyframes=data_dir / d.pop("keyframes", f"keyframes-{name}.json"),
-                   model=model, adapter=d.pop("type", cls.adapter), mask=d.pop("mask", None), mask_tilt=d.pop("mask_tilt", None),
-                   pan_range=pan_range, options=d)
+        old = d.pop("zone", None)  # before several zones: one zone, one mask
+        zones = tuple(d.pop("zones", [old] if old else []))
+        masks = dict(d.pop("masks", {}))
+        if "mask" in d:
+            masks[d.pop("mask")] = d.pop("mask_tilt")
+        return cls(name=name, zones=zones, keyframes=data_dir / d.pop("keyframes", f"keyframes-{name}.json"),
+                   model=model, adapter=d.pop("type", cls.adapter), masks=masks,
+                   default_zone=old or (zones[0] if zones else ""), pan_range=pan_range, options=d)
+
+
+def save_roles(settings: Settings, name: str, zones: list[str], masks: dict[str, int]) -> None:
+    """Write one camera's followed zones and sky masks to cameras.json, keeping its other keys."""
+    entries = json.loads(settings.cameras_file.read_text())
+    entry = entries[name]
+    for old in ("zone", "mask", "mask_tilt"):
+        entry.pop(old, None)
+    entry["zones"], entry["masks"] = zones, masks
+    jsonfile.write(settings.cameras_file, entries, indent=2)
 
 
 def load_cameras(settings: Settings) -> dict[str, CameraConfig]:

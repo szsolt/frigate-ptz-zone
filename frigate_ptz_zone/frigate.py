@@ -12,10 +12,12 @@ class Frigate:
         self.url = url.rstrip("/")
         self._write = threading.Lock()  # one config write at a time
 
-    def set_zone(self, camera: str, zone: str, coords: str | None) -> None:
-        """Write the zone's coordinates, or switch it off when coords is None."""
-        z = f"cameras.{camera}.zones.{zone}"
-        q = {f"{z}.enabled": "false"} if coords is None else {f"{z}.coordinates": coords, f"{z}.enabled": "true"}
+    def set_zones(self, camera: str, zones: dict[str, str | None]) -> None:
+        """Write each zone's coordinates, or switch it off where they are None, in one change."""
+        q = {}
+        for zone, coords in zones.items():
+            z = f"cameras.{camera}.zones.{zone}"
+            q |= {f"{z}.enabled": "false"} if coords is None else {f"{z}.coordinates": coords, f"{z}.enabled": "true"}
         self._config_set(camera, q, "zones")
 
     def set_mask(self, camera: str, mask: str, on: bool) -> None:
@@ -24,9 +26,18 @@ class Frigate:
 
     def zone_coords(self, camera: str, zone: str) -> list[float]:
         """The zone as Frigate's config has it now."""
-        with urllib.request.urlopen(f"{self.url}/api/config", timeout=10) as r:
-            coords = json.loads(r.read())["cameras"][camera]["zones"][zone]["coordinates"]
+        coords = self._camera(camera)["zones"][zone]["coordinates"]
         return [float(v) for v in coords.split(",")]
+
+    def names(self, camera: str) -> tuple[list[str], list[str]]:
+        """The camera's zones and named motion masks."""
+        cam = self._camera(camera)
+        mask = cam["motion"].get("mask") or {}
+        return list(cam["zones"]), list(mask) if isinstance(mask, dict) else []
+
+    def _camera(self, camera: str) -> dict:
+        with urllib.request.urlopen(f"{self.url}/api/config", timeout=10) as r:
+            return json.loads(r.read())["cameras"][camera]
 
     def latest_jpg(self, camera: str, height: int = 540) -> bytes:
         with urllib.request.urlopen(f"{self.url}/api/{camera}/latest.jpg?height={height}", timeout=10) as r:

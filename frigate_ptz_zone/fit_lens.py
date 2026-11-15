@@ -24,8 +24,9 @@ KEYS = ("f", "pan", "tilt", "k1")
 
 
 def score(model: ZoneModel, kfs: list[Keyframe], drawn: list[np.ndarray]) -> float:
-    """Mean overlap over union of each drawn zone with what the other keyframes predict."""
-    return float(np.mean([geometry.overlap(model, k, kfs[:i] + kfs[i + 1:], drawn[i]) for i, k in enumerate(kfs)]))
+    """Mean overlap over union of each drawn zone with what the same zone's other keyframes predict."""
+    return float(np.mean([geometry.overlap(model, k, [x for x in kfs if x is not k and x.zone == k.zone], drawn[i])
+                          for i, k in enumerate(kfs)]))
 
 
 def fit(model: ZoneModel, kfs: list[Keyframe]) -> tuple[Lens, float, float]:
@@ -59,7 +60,7 @@ def main() -> None:
     cfg = load_cameras(Settings.from_env())[args.camera]
     if cfg.model is None:
         sys.exit(f"{args.camera} has no shift yet: run python3 -m frigate_ptz_zone.fit_shift {args.camera} first")
-    kfs = KeyframeStore(args.keyframes or cfg.keyframes).load()
+    kfs = KeyframeStore(args.keyframes or cfg.keyframes, cfg.default_zone).load()
     lens, lens_score, shift_score = fit(cfg.model, kfs)
     print(f"shift model: {shift_score:.3f}   lens model: {lens_score:.3f}   (mean overlap, {len(kfs)} keyframes)")
     print(f'"lens": {json.dumps(dict(zip(KEYS, (lens.f, lens.pan, lens.tilt, lens.k1))))}')

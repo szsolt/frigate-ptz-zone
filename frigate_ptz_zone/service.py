@@ -41,7 +41,7 @@ def build_rigs(settings: Settings, frigate: Frigate) -> dict[str, Rig]:
             log.warning("[%s] skipped: no shift yet, run python3 -m frigate_ptz_zone.fit_shift %s", name, name)
             continue
         camera = open_camera(cfg.adapter, cfg.options)
-        store = KeyframeStore(cfg.keyframes)
+        store = KeyframeStore(cfg.keyframes, cfg.default_zone)
         rigs[name] = Rig(cfg, cfg.model, camera, store, Follower(cfg, cfg.model, camera, store, frigate),
                          Motion(name, camera, learned, pauses))
     return rigs
@@ -63,7 +63,7 @@ def run(settings: Settings) -> None:
     for rig in rigs.values():
         atexit.register(rig.camera.close)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # docker stop: exit cleanly so atexit logs out
-    editor = Editor(settings.editor_port, rigs, frigate)
+    editor = Editor(settings.editor_port, rigs, frigate, settings)
     threading.Thread(target=editor.serve_forever, daemon=True).start()
     threading.Thread(target=_watchdog, args=(rigs,), daemon=True).start()
     threads = [threading.Thread(target=rig.follower.run, daemon=True) for rig in rigs.values()]
@@ -76,7 +76,7 @@ def run(settings: Settings) -> None:
         t.join()
 
 
-def add_keyframe(settings: Settings, name: str, label: str = "") -> None:
+def add_keyframe(settings: Settings, name: str, zone: str, label: str = "") -> None:
     """Record the zone as drawn in Frigate now, at the camera's current position."""
     cfg = load_cameras(settings)[name]
     camera = open_camera(cfg.adapter, cfg.options)
@@ -84,6 +84,6 @@ def add_keyframe(settings: Settings, name: str, label: str = "") -> None:
         pan, tilt = camera.position()
     finally:
         camera.close()
-    coords = Frigate(settings.frigate_url).zone_coords(name, cfg.zone)
-    n = KeyframeStore(cfg.keyframes).save(pan, tilt, coords, label)
+    coords = Frigate(settings.frigate_url).zone_coords(name, zone)
+    n = KeyframeStore(cfg.keyframes, cfg.default_zone).save(zone, pan, tilt, coords, label)
     print(f"recorded {name} {pan}/{tilt}; {n} keyframes")

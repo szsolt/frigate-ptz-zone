@@ -6,7 +6,7 @@ import urllib.request
 import pytest
 from fakes import FakeCamera
 
-from frigate_ptz_zone.config import CameraConfig
+from frigate_ptz_zone.config import CameraConfig, Settings
 from frigate_ptz_zone.editor import Editor
 from frigate_ptz_zone.follower import Follower
 from frigate_ptz_zone.keyframes import KeyframeStore
@@ -19,10 +19,10 @@ def url(tmp_path):
     (tmp_path / "k.json").write_text("[]")
     cfg = CameraConfig.from_dict("cam", {"zone": "z", "keyframes": "k.json", "grid": [160, 90],
                                          "shift": [-0.5, 0, 0, 0.4]}, tmp_path)
-    camera, store = FakeCamera(), KeyframeStore(cfg.keyframes)
+    camera, store = FakeCamera(), KeyframeStore(cfg.keyframes, cfg.default_zone)
     rig = Rig(cfg, cfg.model, camera, store, Follower(cfg, cfg.model, camera, store, None),
               Motion("cam", camera, Learned(tmp_path / "l.json"), Pauses(tmp_path / "p.json")))
-    server = Editor(0, {"cam": rig}, None)
+    server = Editor(0, {"cam": rig}, None, Settings.from_env({"DATA_DIR": str(tmp_path)}))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()

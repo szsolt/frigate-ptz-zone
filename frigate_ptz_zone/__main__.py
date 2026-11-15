@@ -15,11 +15,12 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("run", help="follow the cameras and serve the zone editor (default)")
     add = sub.add_parser("add", help="record the zone as drawn in Frigate now as a keyframe")
     add.add_argument("camera")
+    add.add_argument("zone")
     add.add_argument("label", nargs="*")
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     if args.command == "add":
-        service.add_keyframe(settings, args.camera, " ".join(args.label))
+        service.add_keyframe(settings, args.camera, args.zone, " ".join(args.label))
     else:
         logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                             format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")

@@ -14,6 +14,7 @@
   .tag { position: absolute; left: 8px; top: 6px; background: #000a; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
   polygon { fill: #3c34; stroke: #3c3; stroke-width: 4; }
   .editing polygon { fill: #fc34; stroke: #fc3; }
+  polygon.other, .editing polygon.other { fill: none; stroke: #3c37; stroke-width: 3; stroke-dasharray: 8 8; }
   polygon.guess { fill: none; stroke: #39f; stroke-width: 4; stroke-dasharray: 12 8; }
   path.diff { fill: #f338; stroke: none; }
   .pt { fill: #fff; stroke: #000; stroke-width: 2; cursor: grab; }
@@ -31,6 +32,10 @@
   canvas { width: 100%; aspect-ratio: 2 / 1; background: #1c1c1c; border-radius: 6px; cursor: pointer; }
   .small { font-size: 12px; color: #999; }
   #msg { min-height: 1.3em; color: #fc3; }
+  details { background: #1c1c1c; border-radius: 6px; padding: 6px 10px; }
+  summary { cursor: pointer; }
+  .role { display: flex; align-items: center; gap: 6px; margin: 6px 0; } .role span { flex: 1; }
+  .role input { width: 5em; font: inherit; color: #fff; background: #333; border: 0; border-radius: 6px; padding: 8px; }
 </style>
 </head>
 <body>
@@ -46,6 +51,7 @@
   </div>
   <div class="side">
     <select id="camera"></select>
+    <select id="zone" hidden title="The zone you draw. The other followed zones show dashed."></select>
     <div class="pad">
       <button data-op="LeftUp">◤</button><button data-op="Up">▲</button><button data-op="RightUp">◥</button>
       <button data-op="Left">◀</button><button data-op="home" title="Home">⌂</button><button data-op="Right">▶</button>
@@ -73,6 +79,12 @@
       <button id="calibrate" title="Eight short moves measure how far a fine correction travels per second. Goto lands closer after it.">Calibrate moves</button>
     </div>
     <div id="msg"></div>
+    <details id="roles"><summary>Zones and masks</summary>
+      <div id="rolelist"></div>
+      <button class="primary" id="saveroles">Save roles</button>
+      <div class="small">These are the camera's zones and motion masks in Frigate. A followed zone moves with the camera.
+        A sky mask is on while the camera looks up to its tilt or higher (smaller tilt is higher).</div>
+    </details>
     <canvas id="map" width="600" height="300"></canvas>
     <div class="small">Pan → across, tilt ↓ down. Green: keyframes. Yellow: camera.
       Red: no zone there, capture a keyframe nearby. Orange: beyond the last keyframe, a keyframe here pins the zone down.
@@ -84,9 +96,9 @@
 <script>
 const $ = id => document.getElementById(id);
 const W = 1600, H = 900, SNAP = 0.02;
-let camera = null, state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
+let camera = null, zone = "", state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
 
-const api = (path, body) => fetch(`api/${camera}/${path}`, body && {
+const api = (path, body) => fetch(`api/${camera}/${path}` + (zone ? `?zone=${encodeURIComponent(zone)}` : ""), body && {
   method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
 }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error); return j; });
 const say = t => $("msg").textContent = t || "";
@@ -98,12 +110,14 @@ function frame() {
 $("img").onload = $("img").onerror = () => setTimeout(frame, 300);
 
 // --- zone drawing
+const xy = p => p.map(([x, y]) => `${x * W},${y * H}`).join(" ");
 const parse = s => { const v = s.split(",").map(Number), out = []; for (let i = 0; i < v.length; i += 2) out.push([v[i], v[i + 1]]); return out; };
 function draw() {
   const z = state && (state.here ? state.here.zone : state.zone);
   const svg = $("svg"), shown = pts || (z ? parse(z) : []);
   $("feed").classList.toggle("editing", !!pts);
-  let h = shown.length ? `<polygon points="${shown.map(([x, y]) => `${x * W},${y * H}`).join(" ")}"/>` : "";
+  let h = Object.values((state && state.others) || {}).filter(Boolean).map(o => `<polygon class="other" points="${xy(parse(o))}"/>`).join("");
+  if (shown.length) h += `<polygon points="${xy(shown)}"/>`;
   const guess = compare && !pts && state && state.here && state.here.guess;
   $("adopt").hidden = !guess;
   $("guess").disabled = !(state && state.here) || !!pts;
@@ -216,8 +230,10 @@ function mapXY(pan, tilt) {
   return [(pan - p0) / (p1 - p0) * c.width, (tilt - t0) / (t1 - t0) * c.height];
 }
 function drawMap() {
-  const c = $("map"), g = c.getContext("2d"), cov = state.coverage, [nx, ny] = cov.steps;
+  const c = $("map"), g = c.getContext("2d"), cov = state.coverage;
   g.clearRect(0, 0, c.width, c.height);
+  if (!cov) return;  // no followed zone yet
+  const [nx, ny] = cov.steps;
   const cell = (fill, list) => { g.fillStyle = fill; list.forEach(([i, j]) => g.fillRect(i * c.width / nx, j * c.height / ny, c.width / nx + 1, c.height / ny + 1)); };
   cell("#c333", cov.off); cell("#fa33", cov.extrapolated);
   // a keyframe its neighbours disagree with: redraw it or add one between
@@ -231,7 +247,7 @@ function drawMap() {
   g.strokeStyle = "#fc3"; g.lineWidth = 3; g.beginPath(); g.arc(x, y, r, 0, 7); g.stroke();
 }
 $("map").onclick = e => {
-  if (!state || pts) return;
+  if (!state || !state.coverage || pts) return;
   const c = $("map"), r = c.getBoundingClientRect(), [p0, p1, t0, t1] = state.coverage.box;
   const x = (e.clientX - r.left) / r.width * c.width, y = (e.clientY - r.top) / r.height * c.height;
   // A tap near a keyframe goes to exactly that keyframe
@@ -247,7 +263,14 @@ async function poll() {
     const k = here();
     const fit = k && state.coverage.fit[state.keyframes.findIndex(x => x.pan === k.pan && x.tilt === k.tilt)];
     $("tag").textContent = `pan ${state.pan} · tilt ${state.tilt}` + (state.moving ? " · moving" : "")
-      + (k ? ` · keyframe ${k.pan}/${k.tilt}` + (fit < 1 ? ` · neighbours agree ${Math.round(fit * 100)}%` : "") : state.zone ? "" : " · zone off");
+      + (k ? ` · keyframe ${k.pan}/${k.tilt}` + (fit < 1 ? ` · neighbours agree ${Math.round(fit * 100)}%` : "")
+         : !state.name ? " · no followed zone: see Zones and masks" : state.zone ? "" : " · zone off");
+    const zs = state.zones.join();
+    if ($("zone").dataset.list !== zs) {
+      $("zone").dataset.list = zs;
+      $("zone").innerHTML = state.zones.map(z => `<option>${z}</option>`).join("");
+    }
+    $("zone").value = state.name || ""; $("zone").hidden = !state.name;
     $("save").textContent = (pts ? editAt.replace : k) ? "Update keyframe" : "Save keyframe";
     $("del").disabled = !k;
     $("undo").hidden = !state.undo;
@@ -268,12 +291,30 @@ async function poll() {
 }
 setInterval(poll, 700);
 
+// --- zone picker and roles
+$("zone").onchange = () => { zone = $("zone").value; pts = editAt = null; say(); poll(); };
+$("roles").ontoggle = () => $("roles").open && api("roles").then(r => {
+  const pick = (attr, name, on, label) => `<select ${attr}="${name}"><option value="">not managed</option><option value="1"${on ? " selected" : ""}>${label}</option></select>`;
+  $("rolelist").innerHTML = r.zones.map(z => `<label class="role"><span>Zone ${z}</span>${pick("data-zone", z, r.follows.includes(z), "follows")}</label>`).join("")
+    + r.masks.map(m => `<label class="role"><span>Mask ${m}</span>${pick("data-mask", m, m in r.sky, "sky")}
+        <input type="number" title="Sky from this tilt up" value="${r.sky[m] ?? r.tilt}"></label>`).join("")
+    + `<div class="small">Camera tilt now: ${r.tilt}</div>`;
+}).catch(e => say(e.message));
+$("saveroles").onclick = () => {
+  const on = attr => [...$("rolelist").querySelectorAll(`[${attr}]`)].filter(s => s.value);
+  const zones = on("data-zone").map(s => s.dataset.zone);
+  const masks = Object.fromEntries(on("data-mask").map(s => [s.dataset.mask, Math.round(+s.parentNode.querySelector("input").value)]));
+  api("roles", {zones, masks}).then(() => { zone = ""; pts = editAt = null; say("Roles saved. The service uses them within a second."); poll(); })
+    .catch(e => say(e.message));
+};
+
 // --- cameras
 fetch("api/cameras").then(r => r.json()).then(list => {
   $("camera").innerHTML = list.map(n => `<option>${n}</option>`).join("");
   $("camera").value = list.includes(localStorage.camera) ? localStorage.camera : list[0];
   $("camera").onchange = () => {
     camera = localStorage.camera = $("camera").value;
+    zone = ""; $("roles").open = false;
     state = pts = editAt = null; say(); draw(); poll();
     if (!$("img").src) frame();  // the frame loop picks up the new camera by itself
   };

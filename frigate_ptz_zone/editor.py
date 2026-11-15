@@ -12,10 +12,11 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlsplit
 
 from . import geometry
 from .adapters import OPS
-from .config import ZoneModel
+from .config import Settings, ZoneModel, save_roles
 from .follower import UNSET
 from .keyframes import Keyframe
 from .motion import Busy
@@ -39,34 +40,34 @@ class ApiError(Exception):
 class Editor(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int, rigs: dict[str, Rig], frigate: Frigate):
+    def __init__(self, port: int, rigs: dict[str, Rig], frigate: Frigate, settings: Settings):
         super().__init__(("0.0.0.0", port), Handler)
-        self.rigs, self.frigate = rigs, frigate
-        self._coverage: dict[str, tuple[float, dict]] = {}  # camera -> (keyframes mtime, map)
-        self._building: set[str] = set()
+        self.rigs, self.frigate, self.settings = rigs, frigate, settings
+        self._coverage: dict[tuple[str, str], tuple[float, dict]] = {}  # (camera, zone) -> (keyframes mtime, map)
+        self._building: set[tuple[str, str]] = set()
 
-    def coverage(self, rig: Rig) -> dict:
-        """The coverage map, rebuilt in the background after a save (about a second).
+    def coverage(self, rig: Rig, zone: str) -> dict:
+        """One zone's coverage map, rebuilt in the background after a save (about a second).
 
         The old map is served until the new one is ready.
         """
-        name, mtime = rig.cfg.name, rig.keyframes.mtime()
+        name, mtime = (rig.cfg.name, zone), rig.keyframes.mtime()
         if name not in self._coverage:
-            self._coverage[name] = mtime, self._build(rig)
+            self._coverage[name] = mtime, self._build(rig, zone)
         elif self._coverage[name][0] != mtime and name not in self._building:
             self._building.add(name)
 
             def later() -> None:
                 try:
-                    self._coverage[name] = mtime, self._build(rig)
+                    self._coverage[name] = mtime, self._build(rig, zone)
                 finally:
                     self._building.discard(name)
             threading.Thread(target=later, daemon=True).start()
         return self._coverage[name][1]
 
     @staticmethod
-    def _build(rig: Rig) -> dict:
-        return geometry.coverage_map(rig.model, rig.keyframes.load(), rig.cfg.pan_range)
+    def _build(rig: Rig, zone: str) -> dict:
+        return geometry.coverage_map(rig.model, rig.keyframes.load(zone), rig.cfg.pan_range)
 
 
 def nearby(model: ZoneModel, pan: int, tilt: int, kfs: list[Keyframe]) -> dict | None:
@@ -102,6 +103,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.server.rigs[parts[1]], parts[2]
         return None, parts[0] if parts[:1] != ["api"] else "/".join(parts[1:])
 
+    def _zone(self, rig: Rig) -> str:
+        """The followed zone named by ?zone=, or the camera's first one."""
+        zone = parse_qs(urlsplit(self.path).query).get("zone", [""])[0] or next(iter(rig.cfg.zones), "")
+        if zone not in rig.cfg.zones:
+            raise ApiError(400, "no such followed zone: set the roles first")
+        return zone
+
     def _handle(self, run: Callable[[], Any]) -> None:
         try:
             res = run()
@@ -128,19 +136,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(self.server.frigate.latest_jpg(rig.cfg.name), "image/jpeg")
         if rig is not None and what == "state":
             return self._state(rig)
+        if rig is not None and what == "roles":
+            zones, masks = self.server.frigate.names(rig.cfg.name)
+            return {"zones": zones, "masks": masks, "follows": list(rig.cfg.zones), "sky": rig.cfg.masks,
+                    "tilt": rig.camera.position()[1]}
         raise ApiError(404, "not found")
 
     def _state(self, rig: Rig) -> dict:
         pan, tilt = rig.camera.position()
-        kfs = rig.keyframes.load()
-        zone = rig.follower.zone
-        return {"pan": pan, "tilt": tilt, "moving": rig.motion.busy,
-                "zone": geometry.predict(rig.model, pan, tilt, kfs) if zone is UNSET else zone,
+        common = {"pan": pan, "tilt": tilt, "moving": rig.motion.busy, "zones": list(rig.cfg.zones),
+                  "paused": rig.motion.paused_for(), "calibrated": rig.motion.learned.calibrated(rig.cfg.name)}
+        if not rig.cfg.zones:
+            return common
+        name = self._zone(rig)
+        kfs = rig.keyframes.load(name)
+        now = {z: rig.follower.zones.get(z, UNSET) for z in rig.cfg.zones}
+        now = {z: geometry.predict(rig.model, pan, tilt, rig.keyframes.load(z)) if c is UNSET else c
+               for z, c in now.items()}
+        return common | {
+                "name": name, "zone": now.pop(name), "others": now,
                 "keyframes": [{"pan": k.pan, "tilt": k.tilt} for k in kfs],
-                "here": nearby(rig.model, pan, tilt, kfs), "near": NEAR,
-                "paused": rig.motion.paused_for(), "undo": rig.keyframes.can_undo,
-                "calibrated": rig.motion.learned.calibrated(rig.cfg.name),
-                "coverage": self.server.coverage(rig)}
+                "here": nearby(rig.model, pan, tilt, kfs), "near": NEAR, "undo": rig.keyframes.can_undo,
+                "coverage": self.server.coverage(rig, name)}
 
     # --- POST --------------------------------------------------------------------------------
 
@@ -150,12 +167,16 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self) -> Any:
         rig, what = self._route()
         action = POST.get(what)
-        if rig is None or action is None:
+        if rig is None or (action is None and what != "roles"):
             raise ApiError(404, "not found")
         # Only JSON: a browser sends that cross-site only after a preflight, which this server refuses
         if not self.headers.get("Content-Type", "").startswith("application/json"):
             raise ApiError(415, "send application/json")
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if what == "roles":
+            return self._roles(rig, body)
+        if what in ("keyframe", "delete", "optimize"):
+            body["zone"] = self._zone(rig)
         if rig.motion.paused:
             rig.motion.pause()  # any action keeps the pause going
         if what != "pause" and rig.motion.busy:
@@ -164,6 +185,18 @@ class Handler(BaseHTTPRequestHandler):
             return action(rig, body) or {"ok": True}
         except Busy:
             raise ApiError(409, "camera is still moving") from None
+
+    def _roles(self, rig: Rig, body: dict) -> dict:
+        """Save which zones follow and which masks are sky masks; the follower picks it up on its next step."""
+        zones, masks = body.get("zones"), body.get("masks")
+        if not (isinstance(zones, list) and all(isinstance(z, str) for z in zones)
+                and isinstance(masks, dict) and all(isinstance(t, int) for t in masks.values())):
+            raise ApiError(400, "send zones as a list and masks as {name: tilt}")
+        rig.keyframes.name_zones()  # untagged keyframes belong to the old zone, which cameras.json is about to forget
+        save_roles(self.server.settings, rig.cfg.name, zones, masks)
+        rig.cfg = replace(rig.cfg, zones=tuple(zones), masks=masks)
+        rig.follower.set_cfg(rig.cfg)
+        return {"ok": True}
 
 
 def _pause(rig: Rig, body: dict) -> None:
@@ -213,19 +246,19 @@ def _keyframe(rig: Rig, body: dict) -> None:
     if len(coords) < 6 or len(coords) % 2:
         raise ApiError(400, "a zone needs at least 3 points")
     old = body.get("replace")  # the keyframe being edited, stored again at the current position
-    rig.keyframes.save(pan, tilt, coords, body.get("label", "editor"),
+    rig.keyframes.save(body["zone"], pan, tilt, coords, body.get("label", "editor"),
                        replace=(old["pan"], old["tilt"]) if old else None)
 
 
 def _delete(rig: Rig, body: dict) -> None:
-    rig.keyframes.delete(body["pan"], body["tilt"])
+    rig.keyframes.delete(body["zone"], body["pan"], body["tilt"])
 
 
 def _optimize(rig: Rig, body: dict) -> dict:
     """Drop the redundant keyframes; the full set is kept for undo until the next edit."""
-    kfs = rig.keyframes.load()
+    kfs = rig.keyframes.load(body["zone"])
     kept = geometry.thin(rig.model, kfs)
-    rig.keyframes.keep_only(kept)
+    rig.keyframes.keep_only(body["zone"], kept)
     return {"ok": True, "kept": len(kept), "dropped": len(kfs) - len(kept)}
 
 

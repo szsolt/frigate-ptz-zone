@@ -14,7 +14,8 @@ It watches where the camera points and moves the zone with it. Wherever the came
 
 - Alerts work while the camera tracks someone or you turn it by hand.
 - Where it has no zone for a view, it switches the zone off rather than guess. So a wrong zone never gives you false alerts.
-- Optionally, it switches one of your Frigate motion masks on while the camera looks up. Drawn over the top of the picture, it stops swaying trees from counting as motion there.
+- It can move several zones of one camera, for example `street` and `yard`.
+- Optionally, it switches Frigate motion masks on while the camera looks up. Drawn over the top of the picture, a mask like that stops swaying trees from counting as motion there.
 
 ![The zone follows as the camera turns](docs/follow.gif)
 
@@ -29,7 +30,7 @@ It doesn't matter what moves the camera: its own tracking, Frigate's autotrackin
 - Frigate. I run it on 0.18.
 - A PTZ camera that can tell where it points. Reolink cameras work out of the box. Other makes need a small adapter (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 - On Reolink cameras, HTTPS switched on in the network settings. It is on by default.
-- The zone created in Frigate. Draw it once in Frigate's UI, any shape. This service only moves it.
+- The zones created in Frigate. Draw each once in Frigate's UI, any shape. This service only moves them.
 
 Every time the zone moves, Frigate saves it into its `config.yml`. That's normal.
 
@@ -54,13 +55,13 @@ Add the service to the `docker-compose.yml` that runs Frigate:
       REOLINK_PASSWORD: ${REOLINK_PASSWORD}
 ```
 
-Then tell it about your camera in `./ptz-zone/cameras.json`. Use the camera name and zone name from Frigate:
+Then tell it about your camera in `./ptz-zone/cameras.json`. Use the camera name and zone names from Frigate:
 
 ```json
 {
  "driveway": {
   "host": "192.0.2.10",
-  "zone": "driveway_ground"
+  "zones": ["driveway_ground"]
  }
 }
 ```
@@ -100,6 +101,11 @@ Open the editor at `http://<your docker host>:8781`.
 
 Repeat this at the views the camera usually visits.
 
+**Several zones:** open **Zones and masks**. It lists the camera's zones and motion masks from Frigate.
+Set a zone to **follows** to move it with the camera. Set a mask to **sky** and give the tilt where it switches on.
+Save, and it takes effect at once. Then pick the zone to draw in the list under the camera. The other followed zones show dashed.
+Each zone has its own keyframes.
+
 The map under the buttons shows where you have keyframes:
 
 - **Green dots** are your keyframes. **Yellow** is where the camera points now.
@@ -125,6 +131,12 @@ When the zone shown somewhere looks wrong, just save a keyframe there.
 
 While the camera moves, and a few seconds after, the zone shrinks to the area all recent views share. That's on purpose: Frigate looks at frames from a moment ago, so the zone has to fit those too.
 
+### "Incoming" alerts
+
+With two zones, like `street` and `yard`, an automation in Home Assistant or Node-RED can alert when someone enters `street` and then `yard`. Frigate lists the zones an object entered, in order.
+
+When the camera turns, a zone can slide over a person who is standing still. Frigate then counts that as entering the zone. So have the rule ignore stationary objects.
+
 ## Settings
 
 ### cameras.json
@@ -133,7 +145,7 @@ One entry per camera. The key is the camera's name in Frigate.
 
 | Key | What it does |
 |-----|--------------|
-| `zone` | The Frigate zone that follows the camera. Required. |
+| `zones` | The Frigate zones that follow the camera. The editor sets this. The older `"zone": "name"` still works. |
 | `host` | The camera's address. |
 | `type` | The kind of camera. Default `reolink`. |
 | `position` | Reolink only: how the camera's position is read. `baichuan` (default) is Reolink's own protocol, the one Home Assistant uses. It's about 3× faster, and it works on models whose HTTPS reply has no tilt, like the TrackMix. `https` uses the web API. |
@@ -142,7 +154,7 @@ One entry per camera. The key is the camera's name in Frigate.
 | `keyframes` | The file the keyframes are saved in. Default `keyframes-<camera>.json`. |
 | `max_dist` | How far from the nearest keyframe the zone still shows. Further away, it switches off. Default 260. |
 | `agree` | How many nearby keyframes must agree on an area before it's part of the zone. Higher is stricter. Default 2. |
-| `mask`, `mask_tilt` | A Frigate motion mask's name, and the tilt at which it switches on. The editor shows the camera's tilt. Set both or neither. |
+| `masks` | Sky masks: Frigate motion mask names, each with the tilt at which it switches on, like `{"treetops": 120}`. The editor sets this and shows the camera's tilt. The older `mask` and `mask_tilt` still work. |
 | `pan_min`, `pan_max` | If the camera turns outside this range, it's sent back home. Optional; set both. |
 
 ### Environment variables

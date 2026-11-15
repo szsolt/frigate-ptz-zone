@@ -30,8 +30,8 @@ class FakeFrigate:
     def __init__(self):
         self.zones, self.masks = [], []
 
-    def set_zone(self, camera, zone, coords):
-        self.zones.append(coords)
+    def set_zones(self, camera, zones):
+        self.zones.append(dict(zones))
 
     def set_mask(self, camera, mask, on):
         self.masks.append(on)

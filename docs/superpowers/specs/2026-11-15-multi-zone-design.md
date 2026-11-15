@@ -43,8 +43,8 @@ The order rule itself stays in HA or Node-RED, which read the zone order from Fr
   from cameras.json, so existing files stay valid. Save, delete and Optimize work on one zone.
   Undo restores the whole file, as today.
 - **cameras.json:**
-  - `"zones": {"street": "follow", "yard": "follow"}`
-  - `"masks": {"treetops": {"sky": 123}}`
+  - `"zones": ["street", "yard"]` (the followed zones)
+  - `"masks": {"treetops": 123}` (sky masks and their tilt)
   - The old `zone`, `mask` and `mask_tilt` are still read and mean the same as before.
   - These keys must not fall through to the adapter options.
 - **Editor:**
