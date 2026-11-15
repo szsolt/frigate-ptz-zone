@@ -1,3 +1,4 @@
+import time
 from collections import deque
 from dataclasses import replace
 
@@ -60,6 +61,20 @@ def test_zone_off_when_position_lost(rig, monkeypatch):
     f.step()
     f.step()
     assert frigate.zones[1:] == [{"z": None}] and frigate.masks == [False]
+
+
+def test_camera_move_switches_off_until_its_frames_are_past(rig):
+    f, camera, frigate = rig
+    f.step()
+    camera.move_started = time.monotonic()
+    f.step()
+    f.step()
+    f.step()  # reads are back, but Frigate still detects on frames from the turn
+    assert frigate.zones[1:] == [{"z": None}]
+    f._hold_until = 0  # LAG[1] later
+    f._last_push = 0  # past MIN_PUSH
+    f.step()
+    assert frigate.zones[-1]["z"]
 
 
 def test_out_of_range_sends_home_and_once_more_on_return(rig):

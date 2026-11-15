@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
 
@@ -52,6 +53,8 @@ class Follower:
         self._new_cfg: CameraConfig | None = None
         self._walled = False
         self._seen: deque = deque()
+        self._move_seen = 0.0  # the camera's move_started already acted on
+        self._hold_until = 0.0  # zones stay off until then; inf until the next good read
 
     def _say(self, msg: str) -> None:
         log.info("[%s] %s", self.cfg.name, msg)
@@ -81,8 +84,11 @@ class Follower:
         self.zones = {z: v for z, v in self.zones.items() if z in cfg.zones}
         self._masked = {m: v for m, v in self._masked.items() if m in cfg.masks}
         pos = self._read()
-        if self._lost:
-            self._seen.clear()  # readings from before the gap say nothing about the frames after it
+        if self._lost or self.camera.move_started > self._move_seen:
+            # reads often stall while the camera swings, so it may turn where we can't see
+            self._move_seen = self.camera.move_started
+            self._seen.clear()  # readings from before say nothing about the frames after
+            self._hold_until = math.inf
             self._switch_off()
             return
         if self.cfg.pan_range and pos is not None:
@@ -91,6 +97,10 @@ class Follower:
         now = time.monotonic()
         if pos is not None:
             self._seen.append((now, pos))
+            if self._hold_until == math.inf:
+                self._hold_until = now + LAG[1]  # frames from the unseen turn are still on their way
+        if now < self._hold_until:
+            return
         was = frame_positions(self._seen, now)
         self._reload_keyframes()
         if was and was != self._last_was and now - self._last_push >= MIN_PUSH:

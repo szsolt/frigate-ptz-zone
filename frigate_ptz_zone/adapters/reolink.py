@@ -40,6 +40,7 @@ class Camera(PTZ):
             raise ValueError(f'"position" must be "baichuan" or "https", not {self.via!r}')
         self._bc: Host | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: str | None = None
         self._bc_ok = False  # the last position read worked, so no login or reconnect is due
 
     def _call(self, cmd: str, param: dict, token: bool = True) -> Any:
@@ -112,7 +113,25 @@ class Camera(PTZ):
     async def _bc_send(self, cmd_id: int) -> str:
         if self._bc is None:  # made on the loop it runs on
             self._bc = Host(self.host, os.environ["REOLINK_USER"], os.environ["REOLINK_PASSWORD"])
+            bc, parse = self._bc.baichuan, self._bc.baichuan._parse_xml
+
+            def on_xml(cmd_id: int, xml: str, mess_id: int | None = None) -> None:
+                if cmd_id == 810:  # task status; reolink_aio doesn't read it
+                    self._task_status(xml)
+                parse(cmd_id, xml, mess_id)
+            bc._parse_xml = on_xml
+            await bc.subscribe_events()  # pushes come on this connection; reolink_aio renews it after a reconnect
         return await self._bc.baichuan.send(cmd_id=cmd_id, channel=0)
+
+    def _task_status(self, xml: str) -> None:
+        """The camera pushes its task as it changes: guarding, smartTracking, manualPtz or none.
+
+        Every task but none can start a move, and reads stall while tracking swings the camera.
+        """
+        status = ET.fromstring(xml).findtext(".//taskStatus")
+        if status != self._task and status not in (None, "none"):
+            self.move_started = time.monotonic()
+        self._task = status
 
     def _run(self, coro: Any, timeout: float = 5) -> Any:
         """Run a reolink_aio coroutine on this camera's own event loop, from the caller's thread."""
@@ -165,7 +184,7 @@ class Camera(PTZ):
                 self.token = None
             if self._bc is not None:
                 try:
-                    self._run(self._bc.logout())  # also closes its HTTP session; no HTTP token, so nothing is sent
+                    self._run(self._bc.baichuan.unsubscribe_events())  # logs out; no HTTP token, so nothing goes over HTTPS
                 except Exception as e:  # noqa: BLE001
                     log.info("%s: Baichuan logout failed: %s", self.host, type(e).__name__)
                 self._bc = None

@@ -5,6 +5,7 @@ import threading
 class FakeCamera:
     def __init__(self, pos=(0, 0)):
         self.lock, self.moves, self.restored, self.suspends = threading.RLock(), [], None, 0
+        self.move_started = 0.0
         self.pos = pos  # an Exception instance makes position() raise it
 
     def position(self):

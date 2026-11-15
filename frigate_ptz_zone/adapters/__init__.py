@@ -24,6 +24,7 @@ class PTZ:
     def __init__(self, options: dict[str, Any]):
         self.options = options
         self.lock = threading.RLock()  # held across a timed move, so nothing else is sent before its Stop
+        self.move_started = 0.0  # time.monotonic() when the camera last said it starts a move; 0 if it can't tell
 
     def position(self) -> tuple[int, int]:
         """(pan, tilt) now."""
