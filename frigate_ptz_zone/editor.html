@@ -52,6 +52,7 @@
   <div class="side">
     <select id="camera"></select>
     <select id="zone" hidden title="The zone you draw. The other followed zones show dashed."></select>
+    <label class="small" id="snapl" hidden><input type="checkbox" id="snap" checked> Snap points to the other zones</label>
     <div class="pad">
       <button data-op="LeftUp">◤</button><button data-op="Up">▲</button><button data-op="RightUp">◥</button>
       <button data-op="Left">◀</button><button data-op="home" title="Home">⌂</button><button data-op="Right">▶</button>
@@ -95,7 +96,7 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
-const W = 1600, H = 900, SNAP = 0.02;
+const W = 1600, H = 900, SNAP = 0.02, SNAP_PX = 12;
 let camera = null, zone = "", state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
 
 const api = (path, body) => fetch(`api/${camera}/${path}` + (zone ? `?zone=${encodeURIComponent(zone)}` : ""), body && {
@@ -116,7 +117,9 @@ function draw() {
   const z = state && (state.here ? state.here.zone : state.zone);
   const svg = $("svg"), shown = pts || (z ? parse(z) : []);
   $("feed").classList.toggle("editing", !!pts);
-  let h = Object.values((state && state.others) || {}).filter(Boolean).map(o => `<polygon class="other" points="${xy(parse(o))}"/>`).join("");
+  const others = otherZones();
+  $("snapl").hidden = !others.length;
+  let h = others.map(o => `<polygon class="other" points="${xy(o)}"/>`).join("");
   if (shown.length) h += `<polygon points="${xy(shown)}"/>`;
   const guess = compare && !pts && state && state.here && state.here.guess;
   $("adopt").hidden = !guess;
@@ -146,7 +149,24 @@ function toNorm(e) {
   const c = v => Math.min(1, Math.max(0, v));
   let x = c((e.clientX - r.left) / r.width), y = c((e.clientY - r.top) / r.height);
   if (x < SNAP) x = 0; if (x > 1 - SNAP) x = 1; if (y < SNAP) y = 0; if (y > 1 - SNAP) y = 1;
-  return [x, y];
+  return $("snap").checked ? snapToOthers([x, y], r) : [x, y];
+}
+const otherZones = () => Object.values((state && state.others) || {}).filter(Boolean).map(parse);
+// A point near another zone's corner goes onto it; failing that, onto its nearest edge.
+// Distances are in screen pixels, so it feels the same on a phone and a monitor.
+function snapToOthers([x, y], r) {
+  const px = ([a, b]) => [a * r.width, b * r.height], [qx, qy] = px([x, y]);
+  let best = null, bd = SNAP_PX;
+  const take = p => { const [a, b] = px(p), d = Math.hypot(a - qx, b - qy); if (d < bd) { bd = d; best = p; } };
+  const polys = otherZones();
+  polys.forEach(p => p.forEach(take));
+  if (best) return best;
+  polys.forEach(p => p.forEach((a, i) => {
+    const b = p[(i + 1) % p.length], [ax, ay] = px(a), [bx, by] = px(b), len = (bx - ax) ** 2 + (by - ay) ** 2;
+    const t = len ? Math.min(1, Math.max(0, ((qx - ax) * (bx - ax) + (qy - ay) * (by - ay)) / len)) : 0;
+    take([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+  }));
+  return best || [x, y];
 }
 // Double press is caught here, not with dblclick: draw() replaces the pressed circle, so the browser never fires dblclick
 let press = null;
