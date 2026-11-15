@@ -102,9 +102,10 @@ class Follower:
         try:
             pos = self.camera.position()
         except Exception as e:  # noqa: BLE001 - an adapter can raise anything
-            if str(e) != self._last_err:  # don't repeat the same error twice a second
-                self._say(f"camera: {e}")
-                self._last_err = str(e)
+            err = f"{type(e).__name__}: {e}"
+            if err != self._last_err:  # don't repeat the same error twice a second
+                self._say(f"camera: {err}")
+                self._last_err = err
             self._lost = time.monotonic() - self._last_ok > LOST_AFTER
             return None
         self._last_ok, self._last_err, self._lost = time.monotonic(), None, False
