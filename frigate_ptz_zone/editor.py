@@ -238,6 +238,19 @@ def _centre(rig: Rig, body: dict) -> dict:
     return {"ok": True, "pan": pan, "tilt": tilt}
 
 
+def _fill(rig: Rig, body: dict) -> dict:
+    """The empty area around the tapped point, bounded by the other zones as the page shows them."""
+    try:
+        x, y = min(1.0, max(0.0, float(body["x"]))), min(1.0, max(0.0, float(body["y"])))
+        others = [[float(v) for v in c] for c in body.get("others", [])]
+    except (KeyError, TypeError, ValueError):
+        raise ApiError(400, "send x, y and others as lists of numbers") from None
+    coords = geometry.free_area([c for c in others if len(c) >= 6 and len(c) % 2 == 0], x, y)
+    if coords is None:
+        raise ApiError(409, "that spot is inside another zone")
+    return {"coords": coords}
+
+
 def _keyframe(rig: Rig, body: dict) -> None:
     pan, tilt = rig.camera.position()
     if abs(pan - body["pan"]) > 3 or abs(tilt - body["tilt"]) > 3:
@@ -268,6 +281,6 @@ def _undo(rig: Rig, body: dict) -> None:
 
 
 POST: dict[str, Callable[[Rig, dict], Any]] = {
-    "pause": _pause, "move": _move, "calibrate": _calibrate, "goto": _goto, "centre": _centre,
+    "pause": _pause, "move": _move, "calibrate": _calibrate, "goto": _goto, "centre": _centre, "fill": _fill,
     "keyframe": _keyframe, "delete": _delete, "optimize": _optimize, "undo": _undo,
 }

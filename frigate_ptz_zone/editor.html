@@ -66,6 +66,7 @@
     </div>
     <div class="row">
       <button id="new">New zone here</button>
+      <button id="fill" title="Then tap an empty part of the picture: the zone fills it, up to the other zones and the picture's edge.">Fill</button>
       <button class="danger" id="del">Delete keyframe</button>
     </div>
     <div class="row">
@@ -97,7 +98,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const W = 1600, H = 900, SNAP = 0.02, SNAP_PX = 12;
-let camera = null, zone = "", state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
+let filling = false, camera = null, zone = "", state = null, pts = null, editAt = null, drag = null, compare = false, calibrating = false;
 
 const api = (path, body) => fetch(`api/${camera}/${path}` + (zone ? `?zone=${encodeURIComponent(zone)}` : ""), body && {
   method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
@@ -147,7 +148,9 @@ function startEdit() {
 function toNorm(e) {
   const r = $("svg").getBoundingClientRect();
   const c = v => Math.min(1, Math.max(0, v));
-  let x = c((e.clientX - r.left) / r.width), y = c((e.clientY - r.top) / r.height);
+  return snapPoint([c((e.clientX - r.left) / r.width), c((e.clientY - r.top) / r.height)], r);
+}
+function snapPoint([x, y], r) {
   if (x < SNAP) x = 0; if (x > 1 - SNAP) x = 1; if (y < SNAP) y = 0; if (y > 1 - SNAP) y = 1;
   return $("snap").checked ? snapToOthers([x, y], r) : [x, y];
 }
@@ -173,9 +176,16 @@ let press = null;
 $("svg").addEventListener("pointerdown", e => {
   const i = +e.target.dataset.i;
   if (!state) return;
-  if (isNaN(i)) {  // not on a handle: centre the camera on the tapped spot
-    if (pts) return;
+  if (isNaN(i)) {  // not on a handle: centre the camera on the tapped spot, or fill around it
     const r = $("svg").getBoundingClientRect();
+    if (filling) {
+      filling = false; $("fill").classList.remove("primary");
+      api("fill", {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, others: otherZones().map(o => o.flat())})
+        .then(f => { startEdit(); pts = parse(f.coords.join(",")).map(p => snapPoint(p, r)); say(); draw(); })
+        .catch(e => say(e.message));
+      return;
+    }
+    if (pts) return;
     api("centre", {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height})
       .then(to => say(`Centring: pan ${to.pan}, tilt ${to.tilt}…`)).catch(e => say(e.message));
     return;
@@ -220,6 +230,11 @@ window.addEventListener("blur", release);
 $("hold").onclick = () => api("pause", {on: !(state && state.paused)}).then(poll).catch(e => say(e.message));
 $("reset").onclick = () => { pts = editAt = null; say(); draw(); };
 $("adopt").onclick = () => { pts = parse(state.here.guess); editAt = {pan: state.pan, tilt: state.tilt, replace: state.here}; draw(); };
+$("fill").onclick = () => {
+  filling = !filling && !!(state && state.name);
+  $("fill").classList.toggle("primary", filling);
+  say(filling ? "Tap an empty part of the picture." : "");
+};
 $("new").onclick = () => {
   if (!state) return;
   pts = [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]; editAt = {pan: state.pan, tilt: state.tilt}; draw();

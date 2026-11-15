@@ -219,6 +219,25 @@ def thin(model: ZoneModel, kfs: Sequence[Keyframe], keep: float = 0.95) -> list[
         kfs.pop(max(drop)[1])
 
 
+def free_area(others: Sequence[Sequence[float]], x: float, y: float, size: tuple[int, int] = (800, 450)) -> list[float] | None:
+    """The empty part of the frame around (x, y): up to the other zones and the frame's edge.
+
+    Coordinates are 0..1, flat like a keyframe's. None when (x, y) is inside another zone.
+    """
+    w, h = size
+    scale = np.array([w - 1, h - 1])
+    m = np.zeros((h, w), np.uint8)
+    for c in others:
+        cv2.fillPoly(m, [np.int32(np.round(np.reshape(c, (-1, 2)) * scale))], 255)
+    seed = (round(x * (w - 1)), round(y * (h - 1)))
+    if m[seed[1], seed[0]]:
+        return None
+    cv2.floodFill(m, None, seed, 128)
+    contours, _ = cv2.findContours(np.uint8(m == 128), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    poly = cv2.approxPolyDP(contours[0], 2, True).reshape(-1, 2)
+    return None if len(poly) < 3 else list(np.round(poly / scale, 4).ravel().tolist())
+
+
 def centre_offset(model: ZoneModel, x: float, y: float) -> tuple[float, float]:
     """The pan/tilt turn that brings a point of the frame (0..1) to the middle, from the shift fit."""
     ax, bx, ay, by = model.shift

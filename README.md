@@ -103,7 +103,7 @@ Repeat this at the views the camera usually visits.
 
 **Several zones:** open **Zones and masks**. It lists the camera's zones and motion masks from Frigate.
 Set a zone to **follows** to move it with the camera. Set a mask to **sky** and give the tilt where it switches on.
-Save, and it takes effect at once. Then pick the zone to draw in the list under the camera. The other followed zones show dashed. A point dragged near one of their corners or edges snaps onto it; untick "Snap points" to place it freely.
+Save, and it takes effect at once. Then pick the zone to draw in the list under the camera. The other followed zones show dashed. A point dragged near one of their corners or edges snaps onto it; untick "Snap points" to place it freely. **Fill**, then a tap on an empty part of the picture, draws the zone over that whole area, up to the other zones and the picture's edge.
 Each zone has its own keyframes.
 
 The map under the buttons shows where you have keyframes:
