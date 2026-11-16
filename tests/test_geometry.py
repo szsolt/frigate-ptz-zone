@@ -69,8 +69,8 @@ def test_coverage_map():
 
 
 def test_free_area_fills_up_to_the_other_zone():
-    danger = [0, 0.6, 1, 0.6, 1, 1, 0, 1]
-    above = np.reshape(geometry.free_area([danger], 0.5, 0.2), (-1, 2))
+    lower = [0, 0.6, 1, 0.6, 1, 1, 0, 1]
+    above = np.reshape(geometry.free_area([lower], 0.5, 0.2), (-1, 2))
     assert above[:, 0].min() == 0 and above[:, 0].max() == 1 and above[:, 1].min() == 0
     assert 0.59 <= above[:, 1].max() < 0.6  # stops at the other zone's edge
-    assert geometry.free_area([danger], 0.5, 0.8) is None
+    assert geometry.free_area([lower], 0.5, 0.8) is None
