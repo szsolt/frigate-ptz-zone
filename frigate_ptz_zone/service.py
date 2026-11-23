@@ -61,7 +61,7 @@ def _watchdog(rigs: dict[str, Rig]) -> None:
 
 
 def _connect_mqtt(frigate: Frigate) -> None:
-    """Publish zone states on Frigate's own broker, with its login and MQTT_PASSWORD.
+    """Publish zone states on Frigate's own broker, with its login and FRIGATE_MQTT_PASSWORD.
 
     Waits for Frigate: the followers can't write zones before it answers anyway."""
     while True:
@@ -73,12 +73,12 @@ def _connect_mqtt(frigate: Frigate) -> None:
             time.sleep(10)
     if not cfg.get("enabled") or not cfg.get("host"):
         return
-    if cfg.get("user") and not os.environ.get("MQTT_PASSWORD"):
-        log.warning("MQTT: Frigate's broker needs a login; set MQTT_PASSWORD to publish zone states")
+    if cfg.get("user") and not os.environ.get("FRIGATE_MQTT_PASSWORD"):
+        log.warning("MQTT: Frigate's broker needs a login; set FRIGATE_MQTT_PASSWORD to publish zone states")
         return
     client = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id="frigate-ptz-zone")
     if cfg.get("user"):
-        client.username_pw_set(cfg["user"], os.environ["MQTT_PASSWORD"])
+        client.username_pw_set(cfg["user"], os.environ["FRIGATE_MQTT_PASSWORD"])
     last: list[str] = [""]
 
     def connected(_c: object, _u: object, _f: object, reason: paho.ReasonCode, _p: object) -> None:
