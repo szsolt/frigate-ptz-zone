@@ -17,6 +17,10 @@ class Settings:
     frigate_url: str
     editor_port: int
     cameras_file: Path
+    mqtt_host: str = ""     # set to publish each zone's on/off state to MQTT
+    mqtt_port: int = 1883
+    mqtt_user: str = ""
+    mqtt_prefix: str = "frigate"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> Settings:
@@ -24,7 +28,9 @@ class Settings:
         return cls(data_dir=data_dir,
                    frigate_url=env.get("FRIGATE_API", "http://frigate:5000"),
                    editor_port=int(env.get("EDITOR_PORT", "8781")),
-                   cameras_file=Path(env.get("CAMERAS", data_dir / "cameras.json")))
+                   cameras_file=Path(env.get("CAMERAS", data_dir / "cameras.json")),
+                   mqtt_host=env.get("MQTT_HOST", ""), mqtt_port=int(env.get("MQTT_PORT", "1883")),
+                   mqtt_user=env.get("MQTT_USER", ""), mqtt_prefix=env.get("MQTT_TOPIC_PREFIX", "frigate"))
 
 
 @dataclass(frozen=True)

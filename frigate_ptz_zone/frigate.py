@@ -5,11 +5,14 @@ import json
 import threading
 import urllib.parse
 import urllib.request
+from typing import Any
 
 
 class Frigate:
-    def __init__(self, url: str):
+    def __init__(self, url: str, mqtt: Any = None, prefix: str = "frigate"):
+        """mqtt: a connected paho client, to publish each zone's on/off state where Frigate would."""
         self.url = url.rstrip("/")
+        self.mqtt, self.prefix = mqtt, prefix
         self._write = threading.Lock()  # one config write at a time
 
     def set_zones(self, camera: str, zones: dict[str, str | None]) -> None:
@@ -19,6 +22,11 @@ class Frigate:
             z = f"cameras.{camera}.zones.{zone}"
             q |= {f"{z}.enabled": "false"} if coords is None else {f"{z}.coordinates": coords, f"{z}.enabled": "true"}
         self._config_set(camera, q, "zones")
+        if self.mqtt:
+            # Frigate publishes this topic only at start and on MQTT commands, not on config writes.
+            for zone, coords in zones.items():
+                self.mqtt.publish(f"{self.prefix}/{camera}/zone/{zone}/state", "OFF" if coords is None else "ON",
+                                  qos=1, retain=True)
 
     def set_mask(self, camera: str, mask: str, on: bool) -> None:
         """Switch a motion mask on or off. Its shape is drawn in Frigate's UI."""

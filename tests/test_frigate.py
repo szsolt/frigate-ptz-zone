@@ -26,3 +26,15 @@ def test_set_zones_query(monkeypatch):
         "cameras.cam.zones.z.coordinates": "0,0,1,0,1,1", "cameras.cam.zones.z.enabled": "true",
         "cameras.cam.zones.y.enabled": "false"}
     assert sent[0].full_url.startswith("http://frigate:5000/api/config/set?")
+
+
+def test_set_zones_publishes_zone_state(monkeypatch):
+    monkeypatch.setattr(frigate_module.urllib.request, "urlopen", lambda req, timeout: Reply())
+    sent = []
+
+    class Broker:
+        def publish(self, topic, payload, qos, retain):
+            sent.append((topic, payload, retain))
+
+    Frigate("http://frigate:5000", Broker(), "frigate").set_zones("cam", {"z": "0,0,1,0,1,1", "y": None})
+    assert sent == [("frigate/cam/zone/z/state", "ON", True), ("frigate/cam/zone/y/state", "OFF", True)]

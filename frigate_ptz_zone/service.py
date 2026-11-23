@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import signal
 import sys
 import threading
 import time
 from dataclasses import dataclass
+
+import paho.mqtt.client as paho
 
 from .adapters import PTZ, open_camera
 from .config import CameraConfig, Settings, ZoneModel, load_cameras
@@ -57,8 +60,20 @@ def _watchdog(rigs: dict[str, Rig]) -> None:
                 log.exception("[%s] watchdog", rig.cfg.name)
 
 
+def _mqtt(settings: Settings) -> paho.Client | None:
+    """A client that connects, and reconnects, in the background. Password from MQTT_PASSWORD."""
+    if not settings.mqtt_host:
+        return None
+    client = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id="frigate-ptz-zone")
+    if settings.mqtt_user:
+        client.username_pw_set(settings.mqtt_user, os.environ.get("MQTT_PASSWORD"))
+    client.connect_async(settings.mqtt_host, settings.mqtt_port)
+    client.loop_start()
+    return client
+
+
 def run(settings: Settings) -> None:
-    frigate = Frigate(settings.frigate_url)
+    frigate = Frigate(settings.frigate_url, _mqtt(settings), settings.mqtt_prefix)
     rigs = build_rigs(settings, frigate)
     for rig in rigs.values():
         atexit.register(rig.camera.close)
