@@ -60,20 +60,40 @@ def _watchdog(rigs: dict[str, Rig]) -> None:
                 log.exception("[%s] watchdog", rig.cfg.name)
 
 
-def _mqtt(settings: Settings) -> paho.Client | None:
-    """A client that connects, and reconnects, in the background. Password from MQTT_PASSWORD."""
-    if not settings.mqtt_host:
-        return None
+def _connect_mqtt(frigate: Frigate) -> None:
+    """Publish zone states on Frigate's own broker, with its login and MQTT_PASSWORD.
+
+    Waits for Frigate: the followers can't write zones before it answers anyway."""
+    while True:
+        try:
+            cfg = frigate.mqtt_config()
+            break
+        except OSError as e:
+            log.warning("waiting for Frigate: %s", type(e).__name__)
+            time.sleep(10)
+    if not cfg.get("enabled") or not cfg.get("host"):
+        return
+    if cfg.get("user") and not os.environ.get("MQTT_PASSWORD"):
+        log.warning("MQTT: Frigate's broker needs a login; set MQTT_PASSWORD to publish zone states")
+        return
     client = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id="frigate-ptz-zone")
-    if settings.mqtt_user:
-        client.username_pw_set(settings.mqtt_user, os.environ.get("MQTT_PASSWORD"))
-    client.connect_async(settings.mqtt_host, settings.mqtt_port)
+    if cfg.get("user"):
+        client.username_pw_set(cfg["user"], os.environ["MQTT_PASSWORD"])
+    last: list[str] = [""]
+
+    def connected(_c: object, _u: object, _f: object, reason: paho.ReasonCode, _p: object) -> None:
+        if str(reason) != last[0]:  # once per change: paho retries a refused login every few minutes
+            log.log(logging.WARNING if reason.is_failure else logging.INFO, "MQTT %s: %s", cfg["host"], reason)
+            last[0] = str(reason)
+
+    client.on_connect = connected
+    client.connect_async(cfg["host"], int(cfg.get("port") or 1883))
     client.loop_start()
-    return client
+    frigate.mqtt, frigate.prefix = client, cfg.get("topic_prefix") or "frigate"
 
 
 def run(settings: Settings) -> None:
-    frigate = Frigate(settings.frigate_url, _mqtt(settings), settings.mqtt_prefix)
+    frigate = Frigate(settings.frigate_url)
     rigs = build_rigs(settings, frigate)
     for rig in rigs.values():
         atexit.register(rig.camera.close)
@@ -81,6 +101,7 @@ def run(settings: Settings) -> None:
     editor = Editor(settings.editor_port, rigs, frigate, settings)
     threading.Thread(target=editor.serve_forever, daemon=True).start()
     threading.Thread(target=_watchdog, args=(rigs,), daemon=True).start()
+    _connect_mqtt(frigate)
     threads = [threading.Thread(target=rig.follower.run, daemon=True) for rig in rigs.values()]
     for t in threads:
         t.start()

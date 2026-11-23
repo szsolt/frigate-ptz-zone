@@ -167,10 +167,7 @@ One entry per camera. The key is the camera's name in Frigate.
 | `DATA_DIR` | `/data` in Docker | Where `cameras.json`, keyframes and learned values are kept. |
 | `CAMERAS` | `$DATA_DIR/cameras.json` | Use a different camera file. |
 | `EDITOR_PORT` | `8781` | The editor's port. |
-| `MQTT_HOST` | | Your MQTT broker. When set, each zone's on/off state goes to Frigate's own topic, `frigate/<camera>/zone/<zone>/state`, so Home Assistant shows it. |
-| `MQTT_PORT` | `1883` | The broker's port. |
-| `MQTT_USER`, `MQTT_PASSWORD` | | The broker login, if it needs one. |
-| `MQTT_TOPIC_PREFIX` | `frigate` | Frigate's `mqtt.topic_prefix`, if you changed it. |
+| `MQTT_PASSWORD` | | The password of Frigate's MQTT user. Each zone's on/off state then goes to Frigate's own topic, `frigate/<camera>/zone/<zone>/state`. Broker, user and prefix come from Frigate. Not needed if your broker has no login. |
 
 ## Without Docker
 

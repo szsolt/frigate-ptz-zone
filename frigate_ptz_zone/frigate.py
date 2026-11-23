@@ -43,9 +43,16 @@ class Frigate:
         mask = cam["motion"].get("mask") or {}
         return list(cam["zones"]), list(mask) if isinstance(mask, dict) else []
 
+    def mqtt_config(self) -> dict:
+        """Frigate's mqtt section: host, port, user, topic_prefix. The password is redacted."""
+        return dict(self._config()["mqtt"])
+
     def _camera(self, camera: str) -> dict:
+        return dict(self._config()["cameras"][camera])
+
+    def _config(self) -> dict:
         with urllib.request.urlopen(f"{self.url}/api/config", timeout=10) as r:
-            return json.loads(r.read())["cameras"][camera]
+            return dict(json.loads(r.read()))
 
     def latest_jpg(self, camera: str, height: int = 540) -> bytes:
         with urllib.request.urlopen(f"{self.url}/api/{camera}/latest.jpg?height={height}", timeout=10) as r:
